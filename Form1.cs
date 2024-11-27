@@ -36,6 +36,7 @@ namespace YouTubeViewsClassifier
         private int hoursRemaining = 168; // 7 days * 24 hours
         private DateTime lastRefreshTime;
         private int minutesRemaining = 168 * 60; // Convert hours to minutes (7 days * 24 hours * 60 minutes)
+        private Button infoButton;
 
         public Form1()
         {
@@ -114,12 +115,23 @@ namespace YouTubeViewsClassifier
                 Font = new Font(this.Font.FontFamily, 10, FontStyle.Bold)
             };
 
+            infoButton = new Button
+            {
+                Text = "Video Info",
+                Location = new Point(620, 5), // Position after import button
+                Width = 100,
+                Height = 25,
+                Enabled = false // Initially disabled until a row is selected
+            };
+            infoButton.Click += InfoButton_Click;
+
             // Add all controls to the panel
             topPanel.Controls.Add(refreshButton);
             topPanel.Controls.Add(importButton);
             topPanel.Controls.Add(exportButton);
             topPanel.Controls.Add(startCountButton);
             topPanel.Controls.Add(timerLabel);
+            topPanel.Controls.Add(infoButton);
 
             countdownTimer = new System.Windows.Forms.Timer
             {
@@ -273,6 +285,11 @@ namespace YouTubeViewsClassifier
             mainLayout.Controls.Add(dataGridView, 0, 1);
 
             this.Controls.Add(mainLayout);
+
+            dataGridView.SelectionChanged += (s, e) =>
+            {
+                infoButton.Enabled = dataGridView.SelectedRows.Count > 0;
+            };
         }
 
         private async Task LoadSampleData()
@@ -377,45 +394,9 @@ namespace YouTubeViewsClassifier
                         row.Cells[3].Value = currentViews.ToString("N0");
                         row.Cells[4].Value = rank.ToString();
 
-                        // Update daily views columns
-                        for (int i = 0; i < 7; i++)
-                        {
-                            row.Cells[5 + i].Value = dailyViews[i];
+                        
 
-                            // Color code daily views based on growth
-                            if (i < 6)
-                            {
-                                long difference = dailyViews[i] - dailyViews[i + 1];
-                                if (difference > 0)
-                                {
-                                    row.Cells[5 + i].Style.BackColor = Color.LightGreen;
-                                    row.Cells[5 + i].Style.ForeColor = Color.DarkGreen;
-                                }
-                                else if (difference < 0)
-                                {
-                                    row.Cells[5 + i].Style.BackColor = Color.LightPink;
-                                    row.Cells[5 + i].Style.ForeColor = Color.DarkRed;
-                                }
-                                else
-                                {
-                                    row.Cells[5 + i].Style.BackColor = SystemColors.Window;
-                                    row.Cells[5 + i].Style.ForeColor = SystemColors.ControlText;
-                                }
-                            }
-                        }
-
-                        // Style for recent videos
-                        TimeSpan videoAge = DateTime.Now - publishedAt;
-                        if (videoAge.TotalDays <= 30)
-                        {
-                            row.Cells[2].Style.BackColor = Color.LightYellow;
-                            row.Cells[2].Style.Font = new Font(dataGridView.Font, FontStyle.Bold);
-                        }
-                        else
-                        {
-                            row.Cells[2].Style.BackColor = SystemColors.Window;
-                            row.Cells[2].Style.Font = dataGridView.Font;
-                        }
+                        
                     }
                 });
             }
@@ -985,6 +966,278 @@ namespace YouTubeViewsClassifier
             timerLabel.ForeColor = Color.Green;
             MessageBox.Show("View counting process complete!", "Complete",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private async void InfoButton_Click(object sender, EventArgs e)
+        {
+            if (dataGridView.SelectedRows.Count == 0) return;
+
+            var row = dataGridView.SelectedRows[0];
+            string url = row.Cells[1].Value.ToString();
+            string videoId = ExtractVideoId(url);
+
+            if (!string.IsNullOrEmpty(videoId))
+            {
+                await ShowVideoInfo(videoId);
+            }
+        }
+
+        private async Task ShowVideoInfo(string videoId)
+        {
+            try
+            {
+                string apiUrl = $"https://www.googleapis.com/youtube/v3/videos?id={videoId}&key={API_KEY}&part=statistics,snippet,contentDetails";
+                var response = await httpClient.GetStringAsync(apiUrl);
+                var json = JObject.Parse(response);
+
+                var videoData = json["items"][0];
+                var statistics = videoData["statistics"];
+                var snippet = videoData["snippet"];
+
+                // Get channel info
+                string channelId = snippet["channelId"].ToString();
+                string channelApiUrl = $"https://www.googleapis.com/youtube/v3/channels?id={channelId}&key={API_KEY}&part=statistics,snippet";
+                var channelResponse = await httpClient.GetStringAsync(channelApiUrl);
+                var channelJson = JObject.Parse(channelResponse);
+                var channelStats = channelJson["items"][0]["statistics"];
+
+                // Create and show custom form for info display
+                var infoForm = new Form
+                {
+                    Text = "Video Information",
+                    Size = new Size(800, 800),
+                    StartPosition = FormStartPosition.CenterParent,
+                    FormBorderStyle = FormBorderStyle.FixedDialog,
+                    MaximizeBox = false,
+                    MinimizeBox = false,
+                    AutoScroll = true
+                };
+
+                TableLayoutPanel mainLayout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(10),
+                    ColumnCount = 1,
+                    RowCount = 2,
+                    AutoSize = true
+                };
+
+                mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 70F)); // Video info gets 70%
+                mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 30F)); // Channel info gets 30%
+
+                // Video Information Group
+                GroupBox videoGroup = new GroupBox
+                {
+                    Text = "Video Information",
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(10),
+                    AutoSize = true
+                };
+
+                TableLayoutPanel videoLayout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 2,
+                    RowCount = 8,
+                    AutoSize = true,
+                    Padding = new Padding(5)
+                };
+
+                // Set column styles for video layout
+                videoLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));
+                videoLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+                // Set row styles
+                for (int i = 0; i < 8; i++)
+                {
+                    videoLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                }
+
+                // Add video information with enhanced formatting
+                int row = 0;
+
+                // Title with larger font
+                Label titleLabel = new Label
+                {
+                    Text = "Title:",
+                    AutoSize = true,
+                    Font = new Font(this.Font, FontStyle.Bold),
+                    Margin = new Padding(3, 10, 3, 10)
+                };
+
+                Label titleValue = new Label
+                {
+                    Text = snippet["title"].ToString(),
+                    AutoSize = true,
+                    MaximumSize = new Size(600, 0),
+                    Font = new Font(this.Font.FontFamily, 12, FontStyle.Regular),
+                    Margin = new Padding(3, 10, 3, 10)
+                };
+
+                videoLayout.Controls.Add(titleLabel, 0, row);
+                videoLayout.Controls.Add(titleValue, 1, row++);
+
+                // Statistics with colored backgrounds
+                AddInfoRowWithColor(videoLayout, "Views:", FormatNumber(statistics["viewCount"].ToString()), row++, Color.LightBlue);
+                AddInfoRowWithColor(videoLayout, "Likes:", FormatNumber(statistics["likeCount"].ToString()), row++, Color.LightGreen);
+                AddInfoRowWithColor(videoLayout, "Comments:", FormatNumber(statistics["commentCount"].ToString()), row++, Color.LightYellow);
+
+                // Other information
+                AddInfoRow(videoLayout, "Published:", DateTime.Parse(snippet["publishedAt"].ToString()).ToString("dd MMM yyyy HH:mm"), row++);
+                AddInfoRow(videoLayout, "Duration:", FormatDuration(videoData["contentDetails"]["duration"].ToString()), row++);
+
+                // Description in a rich text box
+                Label descLabel = new Label
+                {
+                    Text = "Description:",
+                    AutoSize = true,
+                    Font = new Font(this.Font, FontStyle.Bold),
+                    Margin = new Padding(3, 10, 3, 10)
+                };
+
+                RichTextBox descValue = new RichTextBox
+                {
+                    Text = snippet["description"].ToString(),
+                    ReadOnly = true,
+                    BackColor = Color.White,
+                    Height = 150,
+                    Dock = DockStyle.Fill,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Margin = new Padding(3, 10, 3, 10)
+                };
+
+                videoLayout.Controls.Add(descLabel, 0, row);
+                videoLayout.Controls.Add(descValue, 1, row++);
+
+                videoGroup.Controls.Add(videoLayout);
+
+                // Channel Information Group
+                GroupBox channelGroup = new GroupBox
+                {
+                    Text = "Channel Information",
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(10),
+                    AutoSize = true
+                };
+
+                TableLayoutPanel channelLayout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 2,
+                    RowCount = 3,
+                    AutoSize = true,
+                    Padding = new Padding(5)
+                };
+
+                // Set column styles for channel layout
+                channelLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));
+                channelLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+                // Add channel information with colored backgrounds
+                AddInfoRowWithColor(channelLayout, "Channel Name:", channelJson["items"][0]["snippet"]["title"].ToString(), 0, Color.LightGray);
+                AddInfoRowWithColor(channelLayout, "Subscribers:", FormatNumber(channelStats["subscriberCount"].ToString()), 1, Color.LightPink);
+                AddInfoRowWithColor(channelLayout, "Total Views:", FormatNumber(channelStats["viewCount"].ToString()), 2, Color.LightBlue);
+
+                channelGroup.Controls.Add(channelLayout);
+
+                // Add groups to main layout
+                mainLayout.Controls.Add(videoGroup, 0, 0);
+                mainLayout.Controls.Add(channelGroup, 0, 1);
+
+                infoForm.Controls.Add(mainLayout);
+                infoForm.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error fetching video information: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void AddInfoRowWithColor(TableLayoutPanel layout, string label, string value, int row, Color backgroundColor)
+        {
+            Label lblLabel = new Label
+            {
+                Text = label,
+                AutoSize = true,
+                Font = new Font(this.Font, FontStyle.Bold),
+                Margin = new Padding(3, 5, 3, 5)
+            };
+
+            Panel valuePanel = new Panel
+            {
+                AutoSize = true,
+                BackColor = backgroundColor,
+                Padding = new Padding(5),
+                Margin = new Padding(3, 5, 3, 5)
+            };
+
+            Label lblValue = new Label
+            {
+                Text = value,
+                AutoSize = true,
+                MaximumSize = new Size(600, 0)
+            };
+
+            valuePanel.Controls.Add(lblValue);
+
+            layout.Controls.Add(lblLabel, 0, row);
+            layout.Controls.Add(valuePanel, 1, row);
+        }
+
+        private void AddInfoRow(TableLayoutPanel layout, string label, string value, int row)
+        {
+            Label lblLabel = new Label
+            {
+                Text = label,
+                AutoSize = true,
+                Font = new Font(this.Font, FontStyle.Bold),
+                Margin = new Padding(3, 5, 3, 5)
+            };
+
+            Label lblValue = new Label
+            {
+                Text = value,
+                AutoSize = true,
+                MaximumSize = new Size(600, 0),
+                Margin = new Padding(3, 5, 3, 5)
+            };
+
+            layout.Controls.Add(lblLabel, 0, row);
+            layout.Controls.Add(lblValue, 1, row);
+        }
+
+        private string FormatNumber(string number)
+        {
+            if (long.TryParse(number, out long value))
+            {
+                if (value >= 1000000000)
+                    return $"{(value / 1000000000.0):N1}B";
+                if (value >= 1000000)
+                    return $"{(value / 1000000.0):N1}M";
+                if (value >= 1000)
+                    return $"{(value / 1000.0):N1}K";
+                return value.ToString("N0");
+            }
+            return number;
+        }
+
+        private string FormatDuration(string isoDuration)
+        {
+            try
+            {
+                // Parse ISO 8601 duration
+                var duration = System.Xml.XmlConvert.ToTimeSpan(isoDuration);
+
+                if (duration.TotalHours >= 1)
+                    return $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}";
+                else
+                    return $"{duration.Minutes}:{duration.Seconds:D2}";
+            }
+            catch
+            {
+                return isoDuration;
+            }
         }
 
     }
